@@ -7,7 +7,11 @@
  :spec-path '(freetype autowrap-spec)
  :sysincludes '("/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/11.0.0/include/")
  :exclude-sources ("/usr/include/")
- :exclude-definitions ("va_list")
+ :exclude-definitions ("va_list"
+                       #+windows
+                       "ptrdiff_t"
+                       #+windows
+                       "size_t")
  :no-accessors t
  :no-functions t)
 
