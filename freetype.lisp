@@ -1,4 +1,4 @@
-(in-package :freetype)
+(in-package #:freetype)
 
 (defvar *library*)
 (export '*library*)
@@ -12,33 +12,41 @@
 (export 'error-code)
 (export 'error-message)
 
-(defun error-string (error-code)
-  (c-fun freetype-ffi:ft-error-string error-code))
-(export 'error-string)
+(defun string-starts-with (lhs rhs)
+  (let ((position (search rhs lhs)))
+    (and position (= position 0))))
 
-(defmacro %handle-error-c-fun (fn &rest args)
+(defun error-name (error-code)
+  (loop for sym being the external-symbols of 'freetype-ffi do
+       (when (and (string-starts-with (symbol-name sym) "+FT-ERR-")
+                  (boundp sym)
+                  (symbol-value sym)
+                  (= (symbol-value sym) error-code))
+         (return (subseq (symbol-name sym) 8 (- (length (symbol-name sym)) 1))))))
+(export 'error-name)
+
+(defmacro handle-error-c-fun (fn &rest args)
   (with-gensyms (error-code)
     `(let ((,error-code (c-fun ,fn ,@args)))
        (when (/= ,error-code 0)
          (error 'freetype-error
                 :function-name ,(symbol-name fn)
                 :error-code ,error-code
-                :error-message (error-string ,error-code))))))
+                :error-message (error-name ,error-code))))))
 
 (defun make-library ()
   (cffi:with-foreign-objects ((library-ptr :pointer))
-    (%handle-error-c-fun freetype-ffi:ft-init-free-type library-ptr)
+    (handle-error-c-fun freetype-ffi:ft-init-free-type library-ptr)
     (autowrap:wrap-pointer (cffi:mem-ref library-ptr :pointer) 'freetype-ffi:ft-library)))
 (export 'make-library)
 
 (defun destroy-library (library)
-  (%handle-error-c-fun freetype-ffi:ft-done-free-type library))
+  (handle-error-c-fun freetype-ffi:ft-done-free-type library))
 (export 'destroy-library)
 
 (defmacro with-init (&body body)
   `(let ((*library* (make-library)))
      (unwind-protect (progn ,@body)
-       (format t "Library: ~A~%" *library*)
        (destroy-library *library*))))
 (export 'with-init)
 
@@ -46,4 +54,16 @@
   *library*)
 (export 'get-library)
 
+(defun make-face (path &optional (face-index 0))
+  (cffi:with-foreign-objects ((face-ptr :pointer))
+    (handle-error-c-fun freetype-ffi:ft-new-face *library* path face-index face-ptr)
+    (autowrap:wrap-pointer (cffi:mem-ref face-ptr :pointer) 'freetype-ffi:ft-face)))
+(export 'make-face)
+
+(defun destroy-face (face)
+  (handle-error-c-fun freetype-ffi:ft-done-face face))
+(export 'destroy-face)
+
+#+nil
+(freetype:with-init (format t "Library loaded! Face: ~A~%" (destroy-face (make-face "projects/freetype/BebasNeueBold.ttf"))))
 
