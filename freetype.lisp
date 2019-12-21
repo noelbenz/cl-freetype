@@ -34,23 +34,26 @@
                 :error-code ,error-code
                 :error-message (error-name ,error-code))))))
 
-(defmacro def-record-method (wrapper-class method-name export-p &rest record-fields)
+(defmacro def-record-method (wrapper-class method-name &key (no-export nil)
+                             (result-wrapper-class nil) fields)
   "Generates a generic method named `method-name' that reads the record of
-`wrapper-class' described by `record-fields'"
-  (with-gensyms (wrapper)
+`wrapper-class' described by `fields'"
+  (with-gensyms (wrapper result)
     `(progn
       (defgeneric ,method-name (object))
       (defmethod ,method-name ((,wrapper ,wrapper-class))
-        (c-ref ,wrapper ,wrapper-class ,@record-fields))
-      ,@(when export-p `((export (quote ,method-name)))))))
+        (let ((,result (c-ref ,wrapper ,wrapper-class ,@fields)))
+          ,(if result-wrapper-class
+              `(autowrap:wrap-pointer (ptr ,result) (quote ,result-wrapper-class))
+              result)))
+      ,@(unless no-export `((export (quote ,method-name)))))))
 
 (defmacro def-record-methods (wrapper-class record-descriptors)
   "Generates a generic method for each descriptor in `record-descriptors' which
 reads a record from `wrapper-class'.
 
-Each record descriptor is a list whose first element is the generic method's name,
-second element is a boolean indicating if the method should be exported, and the
-rest of the elements are the record fields"
+Each record descriptor has the following form:
+ (method-name :no-export t :result-wrapper-class freetype-ffi:ft-face-rec :fields (:some-field))"
   `(progn
      ,@(loop for descriptor in record-descriptors
             collect `(def-record-method ,wrapper-class ,@descriptor))))
@@ -94,29 +97,29 @@ rest of the elements are the record fields"
 (export 'destroy-face)
 
 (def-record-methods freetype-ffi:ft-face-rec
-    ((num-faces t :num-faces)
-     (face-index t :face-index)
-     (face-flags t :face-flags)
-     (style-flags t :style-flags)
-     (num-glyphs t :num-glyphs)
-     (family-name t :family-name)
-     (style-name t :style-name)
-     (num-fixed-sizes t :num-fixed-sizes)
-     (available-sizes t :available-sizes)
-     (num-charmaps t :num-charmaps)
-     (charmaps t :charmaps)
-     (bbox t :bbox)
-     (units-per-em t :units-per-em)
-     (ascender t :ascender)
-     (descender t :descender)
-     (height t :height)
-     (max-advance-width t :max-advance-width)
-     (max-advance-height t :max-advance-height)
-     (underline-position t :underline-position)
-     (underline-thickness t :underline-thickness)
-     (glyph t :glyph)
-     (size t :size)
-     (charmap t :charmap)))
+    ((num-faces :fields (:num-faces))
+     (face-index :fields (:face-index))
+     (face-flags :fields (:face-flags))
+     (style-flags :fields (:style-flags))
+     (num-glyphs :fields (:num-glyphs))
+     (family-name :fields (:family-name))
+     (style-name :fields (:style-name))
+     (num-fixed-sizes :fields (:num-fixed-sizes))
+     (available-sizes :fields (:available-sizes))
+     (num-charmaps :fields (:num-charmaps))
+     (charmaps :fields (:charmaps))
+     (bbox :fields (:bbox))
+     (units-per-em :fields (:units-per-em))
+     (ascender :fields (:ascender))
+     (descender :fields (:descender))
+     (height :fields (:height))
+     (max-advance-width :fields (:max-advance-width))
+     (max-advance-height :fields (:max-advance-height))
+     (underline-position :fields (:underline-position))
+     (underline-thickness :fields (:underline-thickness))
+     (glyph :fields (:glyph))
+     (size-metrics :fields (:size :metrics) :result-wrapper-class freetype-ffi:ft-size-metrics)
+     (charmap :fields (:charmap))))
 
 (defgeneric set-char-size (face &key char-width char-height
                            horizontal-resolution vertical-resolution))
@@ -135,6 +138,16 @@ rest of the elements are the record fields"
   (handle-error-c-fun freetype-ffi:ft-set-pixel-sizes face pixel-width pixel-height)
   face)
 
+(def-record-methods freetype-ffi:ft-size-metrics
+    ((x-ppem :fields (:x-ppem))
+     (y-ppem :fields (:y-ppem))
+     (y-scale :fields (:y-scale))
+     (x-scale :fields (:x-scale))
+     (ascender :fields (:ascender))
+     (descender :fields (:descender))
+     (height :fields (:height))
+     (max-advance :fields (:max-advance))))
+
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
@@ -143,5 +156,6 @@ rest of the elements are the record fields"
     (format t "Face: ~A~%" face)
     (format t "Number of faces: ~A~%" (num-faces face))
     (format t "Ascender: ~A~%" (ascender face))
+    (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
     (destroy-face face)))
 
