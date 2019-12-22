@@ -233,9 +233,14 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
     ((rows :fields (:rows))
      (width :fields (:width))
      (pitch :fields (:pitch))
-     (buffer-ptr :inhibit-string-conversion t :fields (:buffer))
      (num-grays :fields (:num-grays))
      (pixel-mode :fields (:pixel-mode))))
+
+(defgeneric buffer-ptr (bitmap))
+(export 'buffer-ptr)
+
+(defmethod buffer-ptr ((bitmap freetype-ffi:ft-bitmap))
+  (cffi:mem-ref (c-ref bitmap freetype-ffi:ft-bitmap :buffer &) :pointer))
 
 (defgeneric buffer (bitmap))
 (export 'buffer)
@@ -243,17 +248,32 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
 (defmethod buffer ((bitmap freetype-ffi:ft-bitmap))
   (let ((ptr (buffer-ptr bitmap))
         (array (make-array (list (rows bitmap) (width bitmap))
-                           :element-type 'unsigned-byte)))
+                           :element-type 'unsigned-byte
+                           :initial-element 255)))
     (dotimes (y (rows bitmap))
       (dotimes (x (width bitmap))
-        (setf (aref array y x) (cffi:mem-aref ptr :unsigned-char (+ (* y (width bitmap)) x)))))
+        (setf (aref array y x) (cffi:mem-ref ptr :unsigned-char (+ (* y (pitch bitmap)) x)))))
     array))
+
+(defun draw-char (val)
+  (format t "~A"
+          (cond ((< val 60) #\ )
+                ((< val 120) #\.)
+                ((< val 180) #\*)
+                (t #\#))))
+
+(defun ascii-bitmap (bitmap)
+  (let ((buffer (buffer bitmap)))
+    (dotimes (y (rows bitmap))
+      (dotimes (x (width bitmap))
+        (draw-char (aref buffer y x)))
+      (format t "~A" #\Newline))))
 
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
   (let ((face (make-face "projects/freetype/BebasNeueBold.ttf")))
-    (set-char-size face :char-width (to-26-6 12) :horizontal-resolution 80 :vertical-resolution 120)
+    (set-char-size face :char-width (to-26-6 12) :horizontal-resolution 120 :vertical-resolution 80)
     (format t "Face: ~A~%" face)
     (format t "Number of faces: ~A~%" (num-faces face))
     (format t "Ascender: ~A~%" (ascender face))
@@ -265,8 +285,13 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
       (render-glyph glyph)
       (let ((bitmap (bitmap glyph)))
         (format t "Glyph bitmap: ~A~%" bitmap)
+        (format t "Glyph bitmap buffer: ~A~%" (buffer-ptr bitmap))
+        (format t "Glyph bitmap buffer: ~A~%" (cffi:mem-ref (ptr bitmap) :pointer 16))
+        (format t "Bitmap pixel mode: ~A~%" (pixel-mode bitmap))
         (format t "Bitmap width: ~A~%" (width bitmap))
         (format t "Bitmap height: ~A~%" (rows bitmap))
-        (format t "Bitmap buffer: ~A~%" (buffer bitmap))))
+        (format t "Bitmap pitch: ~A~%" (pitch bitmap))
+        (format t "Bitmap buffer: ~A~%" (buffer bitmap))
+        (ascii-bitmap bitmap)))
     (destroy-face face)))
 
