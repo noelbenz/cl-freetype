@@ -34,7 +34,7 @@
                 :error-code ,error-code
                 :error-message (error-name ,error-code))))))
 
-(defmacro def-record-method (wrapper-class method-name &key (no-export nil)
+(defmacro def-record-reader (wrapper-class method-name &key (no-export nil)
                              (result-wrapper-class nil) fields)
   "Generates a generic method named `method-name' that reads the record of
 `wrapper-class' described by `fields'"
@@ -50,7 +50,7 @@
               result)))
       ,@(unless no-export `((export (quote ,method-name)))))))
 
-(defmacro def-record-methods (wrapper-class record-descriptors)
+(defmacro def-record-readers (wrapper-class record-descriptors)
   "Generates a generic method for each descriptor in `record-descriptors' which
 reads a record from `wrapper-class'.
 
@@ -58,7 +58,7 @@ Each record descriptor has the following form:
  (method-name :no-export t :result-wrapper-class freetype-ffi:ft-face-rec :fields (:some-field))"
   `(progn
      ,@(loop for descriptor in record-descriptors
-            collect `(def-record-method ,wrapper-class ,@descriptor))))
+            collect `(def-record-reader ,wrapper-class ,@descriptor))))
 
 (defmacro def-flag-combiner (fn-name prefix &optional (suffix "+"))
   (with-gensyms (flags flag)
@@ -118,7 +118,7 @@ Each record descriptor has the following form:
   (handle-error-c-fun freetype-ffi:ft-done-face face))
 (export 'destroy-face)
 
-(def-record-methods freetype-ffi:ft-face-rec
+(def-record-readers freetype-ffi:ft-face-rec
     ((num-faces :fields (:num-faces))
      (face-index :fields (:face-index))
      (face-flags :fields (:face-flags))
@@ -160,7 +160,7 @@ Each record descriptor has the following form:
   (handle-error-c-fun freetype-ffi:ft-set-pixel-sizes face pixel-width pixel-height)
   face)
 
-(def-record-methods freetype-ffi:ft-size-metrics
+(def-record-readers freetype-ffi:ft-size-metrics
     ((x-ppem :fields (:x-ppem))
      (y-ppem :fields (:y-ppem))
      (y-scale :fields (:y-scale))
@@ -195,6 +195,28 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
                       glyph-index
                       (apply #'combine-load-flags load-flags)))
 
+(def-record-readers freetype-ffi:ft-glyph-slot-rec
+    ((library :fields (:library))
+     (face :fields (:face))
+     (next :fields (:next))
+     (glyph-index :fields (:glyph-index))
+     (generic :fields (:generic))
+     (metrics :fields (:metrics))
+     (linear-hori-advance :fields (:linear-hori-advance))
+     (linear-vert-advance :fields (:linear-vert-advance))
+     (advance :fields (:advance))
+     (glyph-format :fields (:format))
+     (bitmap :fields (:bitmap))
+     (bitmap-left :fields (:bitmap-left))
+     (bitmap-top :fields (:bitmap-top))
+     (outline :fields (:outline))
+     (num-subglyphs :fields (:num-subglyphs))
+     (subglyphs :fields (:subglyphs))
+     (control-data :fields (:control-data))
+     (control-len :fields (:control-len))
+     (lsb-delta :fields (:lsb-delta))
+     (rsb-delta :fields (:rsb-delta))))
+
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
@@ -206,6 +228,6 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
     (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
     (format t "Char index: ~A~%" (get-char-index face #\A))
     (load-glyph face (get-char-index face #\A))
-    (format t "Glyph: ~A~%" (c-ref (glyph face) freetype-ffi:ft-glyph-slot-rec :glyph-index))
+    (format t "Glyph: ~A~%" (glyph-index (glyph face)))
     (destroy-face face)))
 
