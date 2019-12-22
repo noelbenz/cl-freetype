@@ -44,7 +44,9 @@
       (defmethod ,method-name ((,wrapper ,wrapper-class))
         (let ((,result (c-ref ,wrapper ,wrapper-class ,@fields)))
           ,(if result-wrapper-class
-              `(autowrap:wrap-pointer (ptr ,result) (quote ,result-wrapper-class))
+               `(autowrap:wrap-pointer
+                 (if (cffi:pointerp ,result) ,result (ptr ,result))
+                 (quote ,result-wrapper-class))
               result)))
       ,@(unless no-export `((export (quote ,method-name)))))))
 
@@ -57,6 +59,26 @@ Each record descriptor has the following form:
   `(progn
      ,@(loop for descriptor in record-descriptors
             collect `(def-record-method ,wrapper-class ,@descriptor))))
+
+(defmacro def-flag-combiner (fn-name prefix &optional (suffix "+"))
+  (with-gensyms (flags flag)
+    `(defun ,fn-name (&rest ,flags)
+       (reduce
+        (lambda (lhs rhs) (logior lhs rhs))
+        (mapcar (lambda (,flag)
+                  (ecase ,flag
+                    ,@(let ((prefix-upper (string-upcase prefix)))
+                        (loop for sym being the external-symbols of 'freetype-ffi
+                           when (and (string-starts-with (symbol-name sym) prefix-upper)
+                                     (boundp sym))
+                           collect
+                             (let* ((sym-name (symbol-name sym))
+                                    (keyword-name (subseq sym-name
+                                                          (length prefix-upper)
+                                                          (- (length sym-name) (length suffix)))))
+                               `(,(intern keyword-name "KEYWORD") ,(symbol-value sym)))))))
+                ,flags)
+        :initial-value 0))))
 
 (defun from-26-6 (fixed-26-6)
   (/ fixed-26-6 64))
@@ -117,7 +139,7 @@ Each record descriptor has the following form:
      (max-advance-height :fields (:max-advance-height))
      (underline-position :fields (:underline-position))
      (underline-thickness :fields (:underline-thickness))
-     (glyph :fields (:glyph))
+     (glyph :fields (:glyph) :result-wrapper-class freetype-ffi:ft-glyph-slot-rec)
      (size-metrics :fields (:size :metrics) :result-wrapper-class freetype-ffi:ft-size-metrics)
      (charmap :fields (:charmap))))
 
@@ -162,6 +184,17 @@ This may not work correctly on all implementations.
 It depends on the behaviour of char-int to return a UTF-32 integer."
   (c-fun freetype-ffi:ft-get-char-index face (char-int charcode)))
 
+(def-flag-combiner combine-load-flags "+ft-load-")
+
+(defgeneric load-glyph (face glyph-index &rest load-flags))
+(export 'load-glyph)
+
+(defmethod load-glyph ((face freetype-ffi:ft-face-rec) glyph-index &rest load-flags)
+  (handle-error-c-fun freetype-ffi:ft-load-glyph
+                      face
+                      glyph-index
+                      (apply #'combine-load-flags load-flags)))
+
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
@@ -172,5 +205,7 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
     (format t "Ascender: ~A~%" (ascender face))
     (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
     (format t "Char index: ~A~%" (get-char-index face #\A))
+    (load-glyph face (get-char-index face #\A))
+    (format t "Glyph: ~A~%" (c-ref (glyph face) freetype-ffi:ft-glyph-slot-rec :glyph-index))
     (destroy-face face)))
 
