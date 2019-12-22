@@ -35,20 +35,26 @@
                 :error-message (error-name ,error-code))))))
 
 (defmacro def-record-reader (wrapper-class method-name &key (no-export nil)
-                             (result-wrapper-class nil) fields)
+                                                            (result-wrapper-class nil)
+                                                            (inhibit-string-conversion nil)
+                                                            fields)
   "Generates a generic method named `method-name' that reads the record of
 `wrapper-class' described by `fields'"
   (with-gensyms (wrapper result)
     `(progn
-      (defgeneric ,method-name (object))
-      (defmethod ,method-name ((,wrapper ,wrapper-class))
-        (let ((,result (c-ref ,wrapper ,wrapper-class ,@fields)))
-          ,(if result-wrapper-class
-               `(autowrap:wrap-pointer
-                 (if (cffi:pointerp ,result) ,result (ptr ,result))
-                 (quote ,result-wrapper-class))
-              result)))
-      ,@(unless no-export `((export (quote ,method-name)))))))
+       (defgeneric ,method-name (object))
+       (defmethod ,method-name ((,wrapper ,wrapper-class))
+         (let ((,result ,(if inhibit-string-conversion
+                             `(second (multiple-value-list
+                                       (autowrap:inhibit-string-conversion
+                                         (c-ref ,wrapper ,wrapper-class ,@fields))))
+                             `(c-ref ,wrapper ,wrapper-class ,@fields)) ))
+           ,(if result-wrapper-class
+                `(autowrap:wrap-pointer
+                  (if (cffi:pointerp ,result) ,result (ptr ,result))
+                  (quote ,result-wrapper-class))
+                result)))
+       ,@(unless no-export `((export (quote ,method-name)))))))
 
 (defmacro def-record-readers (wrapper-class record-descriptors)
   "Generates a generic method for each descriptor in `record-descriptors' which
@@ -206,7 +212,7 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
      (linear-vert-advance :fields (:linear-vert-advance))
      (advance :fields (:advance))
      (glyph-format :fields (:format))
-     (bitmap :fields (:bitmap))
+     (bitmap :fields (:bitmap) :result-wrapper-class freetype-ffi:ft-bitmap)
      (bitmap-left :fields (:bitmap-left))
      (bitmap-top :fields (:bitmap-top))
      (outline :fields (:outline))
@@ -217,17 +223,50 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
      (lsb-delta :fields (:lsb-delta))
      (rsb-delta :fields (:rsb-delta))))
 
+(def-flag-combiner combine-render-mode-flags "+ft-render-mode-")
+
+(defmethod render-glyph (glyph &rest render-mode-flags)
+  (handle-error-c-fun freetype-ffi:ft-render-glyph glyph
+                      (apply #'combine-render-mode-flags render-mode-flags)))
+
+(def-record-readers freetype-ffi:ft-bitmap
+    ((rows :fields (:rows))
+     (width :fields (:width))
+     (pitch :fields (:pitch))
+     (buffer-ptr :inhibit-string-conversion t :fields (:buffer))
+     (num-grays :fields (:num-grays))
+     (pixel-mode :fields (:pixel-mode))))
+
+(defgeneric buffer (bitmap))
+(export 'buffer)
+
+(defmethod buffer ((bitmap freetype-ffi:ft-bitmap))
+  (let ((ptr (buffer-ptr bitmap))
+        (array (make-array (list (rows bitmap) (width bitmap))
+                           :element-type 'unsigned-byte)))
+    (dotimes (y (rows bitmap))
+      (dotimes (x (width bitmap))
+        (setf (aref array y x) (cffi:mem-aref ptr :unsigned-char (+ (* y (width bitmap)) x)))))
+    array))
+
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
   (let ((face (make-face "projects/freetype/BebasNeueBold.ttf")))
-    (set-char-size face :char-width (to-26-6 12) :horizontal-resolution 8 :vertical-resolution 12)
+    (set-char-size face :char-width (to-26-6 12) :horizontal-resolution 80 :vertical-resolution 120)
     (format t "Face: ~A~%" face)
     (format t "Number of faces: ~A~%" (num-faces face))
     (format t "Ascender: ~A~%" (ascender face))
     (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
     (format t "Char index: ~A~%" (get-char-index face #\A))
     (load-glyph face (get-char-index face #\A))
-    (format t "Glyph: ~A~%" (glyph-index (glyph face)))
+    (let ((glyph (glyph face)))
+      (format t "Glyph index: ~A~%" (glyph-index glyph))
+      (render-glyph glyph)
+      (let ((bitmap (bitmap glyph)))
+        (format t "Glyph bitmap: ~A~%" bitmap)
+        (format t "Bitmap width: ~A~%" (width bitmap))
+        (format t "Bitmap height: ~A~%" (rows bitmap))
+        (format t "Bitmap buffer: ~A~%" (buffer bitmap))))
     (destroy-face face)))
 
