@@ -148,6 +148,20 @@ Each record descriptor has the following form:
      (height :fields (:height))
      (max-advance :fields (:max-advance))))
 
+(defgeneric get-char-index (face charcode))
+(export 'get-char-index)
+
+(defmethod get-char-index ((face freetype-ffi:ft-face-rec) (charcode integer))
+  "Looks up a unicode character in the face and returns its index. Character should be specified as a UTF-32 integer."
+  (c-fun freetype-ffi:ft-get-char-index face charcode))
+
+(defmethod get-char-index ((face freetype-ffi:ft-face-rec) (charcode character))
+  "Looks up a character in the face and returns its index.
+
+This may not work correctly on all implementations.
+It depends on the behaviour of char-int to return a UTF-32 integer."
+  (c-fun freetype-ffi:ft-get-char-index face (char-int charcode)))
+
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
@@ -157,5 +171,6 @@ Each record descriptor has the following form:
     (format t "Number of faces: ~A~%" (num-faces face))
     (format t "Ascender: ~A~%" (ascender face))
     (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
+    (format t "Char index: ~A~%" (get-char-index face #\A))
     (destroy-face face)))
 
