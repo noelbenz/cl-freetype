@@ -3,6 +3,12 @@
 (defvar *library*)
 (export '*library*)
 
+(eval-when 
+    (:compile-toplevel :load-toplevel :execute)
+  (defun string-starts-with (lhs rhs)
+    (let ((position (search rhs lhs)))
+      (and position (= position 0)))))
+
 (define-condition freetype-error (error)
   ((function-name :initarg :function-name :reader function-name)
    (error-code :initarg :error-code :reader error-code)
@@ -11,10 +17,6 @@
 (export 'function-name)
 (export 'error-code)
 (export 'error-message)
-
-(defun string-starts-with (lhs rhs)
-  (let ((position (search rhs lhs)))
-    (and position (= position 0))))
 
 (defun error-name (error-code)
   (loop for sym being the external-symbols of 'freetype-ffi do
@@ -207,7 +209,7 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
      (next :fields (:next))
      (glyph-index :fields (:glyph-index))
      (generic :fields (:generic))
-     (metrics :fields (:metrics))
+     (metrics :fields (:metrics) :result-wrapper-class freetype-ffi:ft-glyph-metrics)
      (linear-hori-advance :fields (:linear-hori-advance))
      (linear-vert-advance :fields (:linear-vert-advance))
      (advance :fields (:advance))
@@ -223,9 +225,22 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
      (lsb-delta :fields (:lsb-delta))
      (rsb-delta :fields (:rsb-delta))))
 
+(def-record-readers freetype-ffi:ft-glyph-metrics
+    ((width :fields (:width))
+     (height :fields (:height))
+     (hori-bearing-x :fields (:hori-bearing-x))
+     (hori-bearing-y :fields (:hori-bearing-y))
+     (hori-advance :fields (:hori-advance))
+     (vert-bearing-x :fields (:vert-bearing-x))
+     (vert-bearing-y :fields (:vert-bearing-y))
+     (vert-advance :fields (:vert-advance))))
+
 (def-flag-combiner combine-render-mode-flags "+ft-render-mode-")
 
-(defmethod render-glyph (glyph &rest render-mode-flags)
+(defgeneric render-glyph (glyph &rest render-mode-flags))
+(export 'render-glyph)
+
+(defmethod render-glyph ((glyph freetype-ffi:ft-glyph-slot-rec) &rest render-mode-flags)
   (handle-error-c-fun freetype-ffi:ft-render-glyph glyph
                       (apply #'combine-render-mode-flags render-mode-flags)))
 
@@ -248,8 +263,7 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
 (defmethod buffer ((bitmap freetype-ffi:ft-bitmap))
   (let ((ptr (buffer-ptr bitmap))
         (array (make-array (list (rows bitmap) (width bitmap))
-                           :element-type 'unsigned-byte
-                           :initial-element 255)))
+                           :element-type 'unsigned-byte)))
     (dotimes (y (rows bitmap))
       (dotimes (x (width bitmap))
         (setf (aref array y x) (cffi:mem-ref ptr :unsigned-char (+ (* y (pitch bitmap)) x)))))
@@ -257,9 +271,9 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
 
 (defun draw-char (val)
   (format t "~A"
-          (cond ((< val 60) #\ )
-                ((< val 120) #\.)
-                ((< val 180) #\*)
+          (cond ((< val 140) #\ )
+                ((< val 210) #\.)
+                ((< val 250) #\*)
                 (t #\#))))
 
 (defun ascii-bitmap (bitmap)
@@ -272,21 +286,24 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
 #+nil
 (freetype:with-init
   (format t "Library loaded!~%")
-  (let ((face (make-face "projects/freetype/BebasNeueBold.ttf")))
-    (set-char-size face :char-width (to-26-6 12) :horizontal-resolution 120 :vertical-resolution 80)
+  (let* ((font-path "Amaranth-Regular.ttf")
+         (face (make-face font-path))
+         (character #\b))
+    (set-char-size face :char-width (to-26-6 18) :horizontal-resolution 120)
     (format t "Face: ~A~%" face)
     (format t "Number of faces: ~A~%" (num-faces face))
     (format t "Ascender: ~A~%" (ascender face))
     (format t "X Scale: ~A~%" (x-scale (size-metrics face)))
-    (format t "Char index: ~A~%" (get-char-index face #\A))
-    (load-glyph face (get-char-index face #\A))
+    (format t "Char index: ~A~%" (get-char-index face character))
+    (load-glyph face (get-char-index face character))
     (let ((glyph (glyph face)))
       (format t "Glyph index: ~A~%" (glyph-index glyph))
-      (render-glyph glyph)
+      (render-glyph glyph :normal)
       (let ((bitmap (bitmap glyph)))
         (format t "Glyph bitmap: ~A~%" bitmap)
         (format t "Glyph bitmap buffer: ~A~%" (buffer-ptr bitmap))
         (format t "Glyph bitmap buffer: ~A~%" (cffi:mem-ref (ptr bitmap) :pointer 16))
+        (format t "Glyph vert advance: ~A~%" (vert-advance (metrics glyph)))
         (format t "Bitmap pixel mode: ~A~%" (pixel-mode bitmap))
         (format t "Bitmap width: ~A~%" (width bitmap))
         (format t "Bitmap height: ~A~%" (rows bitmap))
