@@ -38,6 +38,7 @@
 
 (defmacro def-record-reader (wrapper-class method-name &key (no-export nil)
                                                             (result-wrapper-class nil)
+                                                            (to-keyword nil)
                                                             (inhibit-string-conversion nil)
                                                             fields)
   "Generates a generic method named `method-name' that reads the record of
@@ -50,12 +51,14 @@
                              `(second (multiple-value-list
                                        (autowrap:inhibit-string-conversion
                                          (c-ref ,wrapper ,wrapper-class ,@fields))))
-                             `(c-ref ,wrapper ,wrapper-class ,@fields)) ))
-           ,(if result-wrapper-class
-                `(autowrap:wrap-pointer
-                  (if (cffi:pointerp ,result) ,result (ptr ,result))
-                  (quote ,result-wrapper-class))
-                result)))
+                             `(c-ref ,wrapper ,wrapper-class ,@fields))))
+           ,(cond (result-wrapper-class
+                   `(autowrap:wrap-pointer
+                     (if (cffi:pointerp ,result) ,result (ptr ,result))
+                     (quote ,result-wrapper-class)))
+                  (to-keyword
+                   `(enum-to-keyword ,result ,@to-keyword))
+                  (t result))))
        ,@(unless no-export `((export (quote ,method-name)))))))
 
 (defmacro def-record-readers (wrapper-class record-descriptors)
@@ -67,6 +70,25 @@ Each record descriptor has the following form:
   `(progn
      ,@(loop for descriptor in record-descriptors
             collect `(def-record-reader ,wrapper-class ,@descriptor))))
+
+(defmacro enum-to-keyword (value name &key (prefix "+ft-")
+                                           (infix "-")
+                                           (suffix "+")
+                                           (exclude nil))
+  (let ((start (string-upcase (concatenate 'string prefix name))))
+    `(case ,value
+       ,@(loop for sym being the external-symbols of 'freetype-ffi
+            when (and (string-starts-with (symbol-name sym) start)
+                      (boundp sym))
+            when
+              (let* ((sym-name (symbol-name sym))
+                     (keyword-name (subseq sym-name
+                                           (+ (length start) (length infix))
+                                           (- (length sym-name) (length suffix))))
+                     (keyword (intern (string-upcase keyword-name) "KEYWORD")))
+                (when (not (member keyword exclude :test #'eq))
+                  `(,(symbol-value sym) ,keyword)))
+            collect it))))
 
 (defmacro def-flag-combiner (fn-name prefix &optional (suffix "+"))
   (with-gensyms (flags flag)
@@ -249,7 +271,9 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
      (width :fields (:width))
      (pitch :fields (:pitch))
      (num-grays :fields (:num-grays))
-     (pixel-mode :fields (:pixel-mode))))
+     (pixel-mode :fields (:pixel-mode)
+                 :to-keyword ("pixel-mode"
+                              :exclude (:grays :pal2 :pal4)))))
 
 (defgeneric buffer-ptr (bitmap))
 (export 'buffer-ptr)
@@ -266,8 +290,64 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
                            :element-type 'unsigned-byte)))
     (dotimes (y (rows bitmap))
       (dotimes (x (width bitmap))
-        (setf (aref array y x) (cffi:mem-ref ptr :unsigned-char (+ (* y (pitch bitmap)) x)))))
+        (setf (aref array y x)
+              (cffi:mem-ref ptr :unsigned-char
+                            (+ (* y (pitch bitmap))
+                               x)))))
     array))
+
+(defun pixel-mode-bits (pixel-mode)
+  (ecase pixel-mode
+    (:mono 1)
+    (:gray 8)
+    (:gray2 2)
+    (:gray4 4)
+    (:lcd 24)
+    (:lcd-v 24)
+    (:bgra 32)))
+(export 'pixel-mode-bits)
+
+(defgeneric bitmap-aref (bitmap x y &optional c))
+(export 'bitmap-aref)
+
+(defmethod bitmap-aref ((bitmap freetype-ffi:ft-bitmap)
+                        x y &optional c)
+  (let* ((ptr (buffer-ptr bitmap))
+         (component-count (ceiling (/ (pixel-mode-bits (pixel-mode bitmap)) 8)))
+         (y-index (* y (pitch bitmap)))
+         (index (+ y-index (* x component-count))))
+    (if (or c (= component-count 1))
+        (cffi:mem-ref ptr :unsigned-char (+ index (or c 0)))
+        (loop for i below component-count collect
+             (cffi:mem-ref ptr :unsigned-char (+ index i))))))
+
+(defun byte-aligned-bitmap-rows (bitmap byte-align)
+  (let* ((width (width bitmap))
+         (height (rows bitmap))
+         (old-pitch (pitch bitmap))
+         (bits-per-pixel (pixel-mode-bits (pixel-mode bitmap)))
+         (bytes-per-row (ceiling (/ (* bits-per-pixel width) 8)))
+         (new-pitch (* (ceiling (/ bytes-per-row byte-align)) byte-align)))
+    (when (= new-pitch old-pitch)
+      (return-from byte-aligned-bitmap-rows (values (buffer-ptr bitmap) nil)))
+    (let* ((new-size (* new-pitch height))
+           (old-ptr (buffer-ptr bitmap))
+           (new-ptr (cffi:foreign-alloc :unsigned-char :count new-size)))
+      (dotimes (y height)
+        (dotimes (x bytes-per-row)
+          (setf (cffi:mem-ref new-ptr :unsigned-char (+ (* y new-pitch) x))
+                (cffi:mem-ref old-ptr :unsigned-char (+ (* y old-pitch) x)))))
+      (values new-ptr t))))
+
+(defmacro with-byte-aligned-bitmap-rows ((ptr bitmap byte-align) &body body)
+  (with-gensyms (alloc-p)
+    `(multiple-value-bind (,ptr ,alloc-p)
+         (byte-aligned-bitmap-rows ,bitmap ,byte-align)
+       (unwind-protect
+            (progn ,@body)
+         (when ,alloc-p
+           (cffi:foreign-free ,ptr))))))
+(export 'with-byte-aligned-bitmap-rows)
 
 (defun draw-char (val)
   (format t "~A"
