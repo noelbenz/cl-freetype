@@ -183,7 +183,7 @@ Each record descriptor has the following form:
                       horizontal-resolution vertical-resolution)
   face)
 
-(defgeneric set-pixel-size (face &key pixel-width pixel-height ))
+(defgeneric set-pixel-size (face &key pixel-width pixel-height))
 (export 'set-pixel-size)
 
 (defmethod set-pixel-size ((face freetype-ffi:ft-face-rec) &key (pixel-width 0) (pixel-height 0))
@@ -307,6 +307,19 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
     (:bgra 32)))
 (export 'pixel-mode-bits)
 
+(defgeneric pixel-height (object))
+(export 'pixel-height)
+
+(defmethod pixel-height ((bitmap freetype-ffi:ft-bitmap))
+  (rows bitmap))
+
+(defgeneric pixel-width (object))
+(export 'pixel-width)
+
+(defmethod pixel-width ((bitmap freetype-ffi:ft-bitmap))
+  (/ (width bitmap)
+     (/ (pixel-mode-bits (pixel-mode bitmap)) 8)))
+
 (defgeneric bitmap-aref (bitmap x y &optional c))
 (export 'bitmap-aref)
 
@@ -322,11 +335,9 @@ It depends on the behaviour of char-int to return a UTF-32 integer."
              (cffi:mem-ref ptr :unsigned-char (+ index i))))))
 
 (defun byte-aligned-bitmap-rows (bitmap byte-align)
-  (let* ((width (width bitmap))
+  (let* ((bytes-per-row (width bitmap))
          (height (rows bitmap))
          (old-pitch (pitch bitmap))
-         (bits-per-pixel (pixel-mode-bits (pixel-mode bitmap)))
-         (bytes-per-row (ceiling (/ (* bits-per-pixel width) 8)))
          (new-pitch (* (ceiling (/ bytes-per-row byte-align)) byte-align)))
     (when (= new-pitch old-pitch)
       (return-from byte-aligned-bitmap-rows (values (buffer-ptr bitmap) nil)))
